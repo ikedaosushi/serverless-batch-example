@@ -1,0 +1,134 @@
+service: serverless-batch-example
+
+# 設定はここだけ
+custom:
+  default_stage: dev
+  region: ap-northeast-1
+  stage: ${opt:stage, self:custom.default_stage}
+  batch:
+    compute_env: ${self:service}-compute-env-${self:custom.stage}
+    job_queue: ${self:service}-job-queue-${self:custom.stage}
+    job_queue_arn: !Ref SlsJobQueue
+    job_definition: ${self:service}-job-definition-${self:custom.stage}
+    commands:
+      - python
+      - sample.py
+      - Ref::first_arg # 引数のプレースホルダを設定
+      - Ref::second_arg
+  subnet_ids: subnet-xxxxxxxx,subnet-xxxxxxx,subnet-xxxxxxxxx # 設定したいsubnetを記載
+  security_groups: sg-xxxxxxxxxxxxxxx # 設定したいsecurity groupを記載
+  # メモっておいたrepositoryUriを設定
+  repo_uri: xxxxxxxxxxxxxxx.dkr.ecr.ap-northeast-1.amazonaws.com/serverless-batch-example
+
+provider:
+  name: aws
+  runtime: python3.7
+  stage: ${self:custom.stage}
+  region: ${self:custom.region}
+  environment:
+    BATCH_JOB_QUEUE_ARN: ${self:custom.batch.job_queue_arn}
+    BATCH_JOB_DEFINITION: ${self:custom.batch.job_definition}
+  iamRoleStatements:
+    - Effect: Allow
+      Action: batch:*
+      Resource: arn:aws:batch:*
+
+functions:
+  batch:
+    handler: handler.batch
+  batch_daily: # 1日おきに実行
+    handler: handler.batch
+    events:
+      - schedule: rate(1 day)
+  batch_api: # APIエンドポイントを作成
+    handler: handler.batch
+    events:
+      - http:
+          path: batch
+          method: get
+
+resources:
+  Parameters:
+    SubnetIds:
+      Type: List<AWS::EC2::Subnet::Id>
+      Default: ${self:custom.subnet_ids}
+    SecurityGroupIds:
+      Type: List<AWS::EC2::SecurityGroup::Id>
+      Default: ${self:custom.security_groups}
+    EcrImage:
+      Type: String
+      Default: ${self:custom.repo_uri}
+  Resources:
+    BatchServiceRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+              - batch.amazonaws.com
+            Action:
+            - sts:AssumeRole
+        ManagedPolicyArns:
+          - arn:aws:iam::aws:policy/service-role/AWSBatchServiceRole
+    ecsInstanceRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+              - ec2.amazonaws.com
+            Action:
+            - sts:AssumeRole
+        ManagedPolicyArns:
+          - arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role
+    ecsInstanceProfile:
+      Type: AWS::IAM::InstanceProfile
+      Properties:
+        Roles:
+          - !Ref ecsInstanceRole
+    SlsComputeEnv: # ComputeEnvironment
+      Type: AWS::Batch::ComputeEnvironment
+      Properties:
+        Type: MANAGED
+        ServiceRole: !GetAtt BatchServiceRole.Arn
+        ComputeEnvironmentName: ${self:custom.batch.compute_env}
+        ComputeResources:
+          MaxvCpus: 256 # 最大vCPU数
+          MinvCpus: 0 # 最小vCPU数
+          SecurityGroupIds: !Ref SecurityGroupIds
+          InstanceRole: !GetAtt ecsInstanceProfile.Arn
+          Subnets: !Ref SubnetIds
+          Type: EC2
+          InstanceTypes:
+            - optimal
+        State: ENABLED
+    SlsJobQueue: # JobQueue
+      Type: AWS::Batch::JobQueue
+      Properties:
+        JobQueueName: ${self:custom.batch.job_queue}
+        ComputeEnvironmentOrder:
+          - Order: 1
+            ComputeEnvironment: !Ref SlsComputeEnv
+        State: ENABLED
+        Priority: 1
+    SlsJobDefinition: # JobDefinition
+      Type: AWS::Batch::JobDefinition
+      Properties:
+        Type: container
+        JobDefinitionName: ${self:custom.batch.job_definition}
+        ContainerProperties:
+          Command: ${self:custom.batch.commands}
+          Memory: 4048
+          Vcpus: 2
+          Image: !Ref EcrImage
+
+package:
+  exclude:
+    - README.md
+    - batch/
