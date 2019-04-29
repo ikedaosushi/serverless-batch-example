@@ -5,7 +5,7 @@ IMAGE=serverless-batch-example
 TAG=latest
 DOCKERFILE=app.dockerfile
 ## さっきメモしたrepositoryUriを貼り付け
-ECR_URI=081200852128.dkr.ecr.ap-northeast-1.amazonaws.com/serverless-batch-example
+ECR_URI=xxxxxxxxxx.dkr.ecr.ap-northeast-1.amazonaws.com/serverless-batch-example
 
 # Build image
 docker build -t "${IMAGE}:${TAG}" -f "${DOCKERFILE}" .
